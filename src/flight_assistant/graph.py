@@ -42,24 +42,20 @@ def build_graph():
     builder.add_edge("report_error", END)
     builder.add_edge("ask_clarification", END)
 
-    # 🔲 TODO 1 - make the graph branch on the user's intent.
-    #   a) Register 4 more NODES with builder.add_node(name, fn):
-    #        "answer_info" -> answer_info, "cancel_booking" -> cancel_booking,
-    #        "confirm_cancel" -> confirm_cancel, "travel_agent" -> travel_agent
-    #        (all imported above)
-    #   b) Replace the plain edge below with a CONDITIONAL EDGE from
-    #      "classify_intent" that calls `route_by_intent` (src/flight_assistant/edges.py) and can
-    #      go to: "answer_info", "cancel_booking", "travel_agent", "ask_clarification".
-    #      👀 Copy the `load_context` conditional edge above.
-    #   c) Add plain EDGES with builder.add_edge(...):
-    #        "cancel_booking" -> "confirm_cancel"   (a 2-step workflow, see TODO 3)
-    #        "answer_info", "confirm_cancel", "travel_agent" -> END
-    #
-    # Right now every request ends up in ask_clarification. LangGraph refuses
-    # to compile a graph with unreachable nodes - that's why these nodes are
-    # not registered yet. Run `python -m flight_assistant.draw` before and after!
-    # ✅ Check: pytest tests/unit/test_1_graph_wiring.py
-    builder.add_edge("classify_intent", "ask_clarification")
+    # ✅ TODO 1 (solved)
+    builder.add_node("answer_info", answer_info)
+    builder.add_node("cancel_booking", cancel_booking)
+    builder.add_node("confirm_cancel", confirm_cancel)
+    builder.add_node("travel_agent", travel_agent)
+    builder.add_conditional_edges(
+        "classify_intent",
+        route_by_intent,
+        ["answer_info", "cancel_booking", "travel_agent", "ask_clarification"],
+    )
+    builder.add_edge("cancel_booking", "confirm_cancel")
+    builder.add_edge("answer_info", END)
+    builder.add_edge("confirm_cancel", END)
+    builder.add_edge("travel_agent", END)
 
     # 🔲 TODO 4 - `interrupt()` needs a CHECKPOINTER: it saves the state after
     # every step so a paused run can be resumed later (same `thread_id`).
