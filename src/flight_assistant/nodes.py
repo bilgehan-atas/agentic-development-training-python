@@ -87,68 +87,70 @@ def classify_intent(state: State) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🔲 TODO 2 - plain LLM invocation: `llm.invoke(messages)`.
+# ✅ TODO 2 (solved) - plain LLM invocation: `llm.invoke(messages)`.
 #
-# Answer questions about the account ("What's my balance?", "Which bookings
+# Answers questions about the account ("What's my balance?", "Which bookings
 # do I have?") using ONLY the data loaded by `load_context`. No tools needed:
-# everything the model needs can be put into the prompt.
-#
-# Steps:
-#   1. Build a SystemMessage that tells the model it is an airline assistant
-#      and gives it the account data: `describe_user(state["user"])`.
-#      (Adding `today_line()` helps with questions like "my next flight".)
-#   2. `llm.invoke([system_message, *state["messages"]])`
-#      (the whole conversation, so follow-up questions work) -> returns an AIMessage.
-#   3. Return `{"messages": [that_ai_message]}` - the reducer APPENDS it.
-#
-# 👀 `classify_intent` above does almost the same (but with structured output).
-# ✅ Check: pytest tests/unit/test_2_answer_info.py
-#    Try:   python -m flight_assistant.main "What is my balance and which bookings do I have?"
+# everything the model needs is already in the prompt.
 # ─────────────────────────────────────────────────────────────────────────────
 def answer_info(state: State) -> dict:
-    return reply("TODO 2: implement answer_info in src/flight_assistant/nodes.py")
+    response = llm.invoke(
+        [
+            SystemMessage(
+                f"You are a helpful airline assistant. {today_line()}\n"
+                f"Answer the user's latest question briefly, using ONLY this account data:\n\n"
+                f"{describe_user(state.get('user'))}"
+            ),
+            *state["messages"],
+        ]
+    )
+    return {"messages": [response]}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🔲 TODO 3 - a fixed WORKFLOW of two nodes: the LLM fills in one blank, code does the rest.
+# ✅ TODO 3 (solved) - a fixed WORKFLOW of two nodes: the LLM fills in one blank,
+# code does the rest.
 #
-#   cancel_booking  (part 1)  LLM with structured output -> which PNR does the user mean?
-#                             Stores it in `state["pnr_code"]`. Nothing else!
-#   confirm_cancel  (part 2)  Code -> ask for approval, call api.cancel, format the answer.
+#   cancel_booking  LLM with structured output -> which PNR does the user mean?
+#   confirm_cancel  Code -> ask for approval, call api.cancel, format the answer.
 #
-# Why two nodes? `require_approval()` pauses the graph, and on resume LangGraph
-# re-runs the paused node FROM ITS FIRST LINE. If the LLM call were in the same
-# node, it would run again - and could pick a different booking than the one the
-# user just approved. Code before an interrupt must be safe to repeat.
+# Two nodes, because on resume LangGraph re-runs the paused node from its first
+# line: the LLM call must not be in the node that calls `require_approval()`,
+# or it could pick a different booking than the one the user approved.
 #
 # Compare with `travel_agent` below, where the LLM decides the steps itself.
-#
-# Part 1 - cancel_booking:
-#   1. Create a pydantic model `class PnrOutput(BaseModel): pnr_code: str = Field(description=...)`
-#      Tell it (in the description) to return an empty string when it is unclear.
-#   2. `llm.with_structured_output(PnrOutput).invoke([...])` with a SystemMessage containing
-#      `describe_user(state["user"])` - so "cancel my Oct 22 flight" can be mapped to a code -
-#      followed by `*state["messages"]`.
-#   3. Return `{"pnr_code": pnr_code}`, trimmed + upper-cased (it may be "").
-#
-# Part 2 - confirm_cancel (reads `state["pnr_code"]`; no LLM here!):
-#   1. If the code is empty, `return reply("Which booking…?")`.
-#   2. If not require_approval(f"Cancel booking {code}.") -> reply that nothing was cancelled.
-#      (It auto-approves until you do TODO 4.)
-#   3. `api.cancel(code)` -> reply with the refund and the new balance.
-#      Catch `ApiError` (e.g. "PNR is not active") and reply with its message.
-#
-# 👀 `classify_intent` (structured output), `load_context` (API call + try/except),
-#    `ask_clarification` (the `reply()` helper).
-# ✅ Check: pytest tests/unit/test_3_cancel_booking.py
-#    Try:   python -m flight_assistant.main "Please cancel my booking ABC123"
 # ─────────────────────────────────────────────────────────────────────────────
+class PnrOutput(BaseModel):
+    pnr_code: str = Field(description="The 6-character booking code to cancel, or an empty string if unclear")
+
+
 def cancel_booking(state: State) -> dict:
-    return {"pnr_code": ""}  # TODO 3 (part 1): implement cancel_booking in src/flight_assistant/nodes.py
+    extractor = llm.with_structured_output(PnrOutput)
+    result = extractor.invoke(
+        [
+            SystemMessage(
+                f"Find the booking the user wants to cancel in their latest message. {today_line()}\n"
+                f"The user's bookings:\n{describe_user(state.get('user'))}"
+            ),
+            *state["messages"],
+        ]
+    )
+    return {"pnr_code": result.pnr_code.strip().upper()}
 
 
 def confirm_cancel(state: State) -> dict:
-    return reply("TODO 3: implement cancel_booking and confirm_cancel in src/flight_assistant/nodes.py")
+    code = state.get("pnr_code")
+    if not code:
+        return reply("Which booking would you like to cancel? Please give me its PNR code.")
+
+    if not require_approval(f"Cancel booking {code}."):
+        return reply(f"OK, booking {code} was NOT cancelled.")
+
+    try:
+        result = api.cancel(code)
+        return reply(f"Booking {code} is cancelled. Refund: {result['refund']} EUR. New balance: {result['balance']} EUR.")
+    except ApiError as err:
+        return reply(f"Could not cancel {code}: {err.message}.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -191,4 +193,19 @@ def confirm_cancel(state: State) -> dict:
 #           python -m flight_assistant.main "Cancel ABC123 and book the evening flight on <some date> instead"
 # ─────────────────────────────────────────────────────────────────────────────
 def travel_agent(state: State) -> dict:
-    return reply("TODO 5: implement travel_agent in src/flight_assistant/nodes.py")
+    agent = create_agent(
+        model=llm,
+        tools=travel_tools,
+        system_prompt=(
+            f"You are a helpful airline assistant for IST<->FRA flights. {today_line()}\n"
+            f"The user's account:\n{describe_user(state.get('user'))}\n\n"
+            "Rules:\n"
+            "- Never invent flight ids: always get them from list_flights first.\n"
+            "- Act right away without asking for confirmation yourself - a separate "
+            "approval step already asks the user before any booking change runs.\n"
+            "- Finish by saying clearly what was done and the user's new balance."
+        ),
+        middleware=[HumanInTheLoopMiddleware(interrupt_on=interrupt_on)],
+    )
+    result = agent.invoke({"messages": state["messages"]})
+    return {"messages": [result["messages"][-1]]}

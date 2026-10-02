@@ -76,31 +76,20 @@ def change_booking_tool(pnr_code: str, new_flight_id: str) -> str:
     return run(lambda: api.change(pnr_code, new_flight_id))
 
 
-# 🔲 TODO 5 (part 1 of 2) - give the travel agent a `cancel_pnr` tool.
-#
-# Part 2 is `travel_agent` in src/flight_assistant/nodes.py. An agent can only do what
-# its tools allow: without this tool, "Cancel ABC123 and book the Friday evening flight
-# instead" fails because the agent has no way to cancel. Build the tool:
-#   - name:        "cancel_pnr"
-#   - description: tell the LLM WHAT it does and WHEN to use it (vs. change_booking)
-#   - args_schema: a pydantic BaseModel with a `pnr_code` field (+ description)
-#   - function:    `run(lambda: api.cancel(pnr_code))`
-# Then add it to `travel_tools` below, and give it an approval rule in `interrupt_on`
-# (cancelling moves money too!).
-#
-# 👀 `change_booking_tool` is almost identical.
-# ✅ Check: pytest tests/unit/test_5_cancel_tool.py
+# ✅ TODO 5 (part 1 of 2, solved)
 class CancelPnrInput(BaseModel):
-    pnr_code: str = Field(description="TODO")
+    pnr_code: str = Field(description="6-character booking code to cancel, e.g. ABC123")
 
 
-@tool("todo", args_schema=CancelPnrInput)
+@tool("cancel_pnr", args_schema=CancelPnrInput)
 def cancel_pnr_tool(pnr_code: str) -> str:
-    """TODO"""
-    raise NotImplementedError("TODO 5: implement cancel_pnr_tool in src/flight_assistant/tools.py")
+    """Cancel an existing ACTIVE booking (PNR), refunding it (paid price minus cancellation
+    fee) to the user's balance. Use this instead of change_booking when the user wants to
+    drop a booking entirely rather than move it to another flight."""
+    return run(lambda: api.cancel(pnr_code))
 
 
-travel_tools = [list_flights_tool, book_flight_tool, change_booking_tool]
+travel_tools = [list_flights_tool, book_flight_tool, change_booking_tool, cancel_pnr_tool]
 
 # ✅ GIVEN (except the cancel_pnr rule - TODO 5) - which tool calls need a human's OK.
 #
@@ -114,12 +103,16 @@ APPROVE_OR_REJECT = ["approve", "reject"]
 interrupt_on: dict = {
     "book_flight": {
         "allowed_decisions": APPROVE_OR_REJECT,
-        "description": lambda call: f"Book a NEW ticket on flight {call.tool_call['args']['flight_id']}.",
+        "description": lambda call, state, runtime: f"Book a NEW ticket on flight {call['args']['flight_id']}.",
     },
     "change_booking": {
         "allowed_decisions": APPROVE_OR_REJECT,
-        "description": lambda call: (
-            f"Move booking {call.tool_call['args']['pnr_code']} to flight {call.tool_call['args']['new_flight_id']}."
+        "description": lambda call, state, runtime: (
+            f"Move booking {call['args']['pnr_code']} to flight {call['args']['new_flight_id']}."
         ),
+    },
+    "cancel_pnr": {
+        "allowed_decisions": APPROVE_OR_REJECT,
+        "description": lambda call, state, runtime: f"Cancel booking {call['args']['pnr_code']}.",
     },
 }
