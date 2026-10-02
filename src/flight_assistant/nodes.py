@@ -110,45 +110,49 @@ def answer_info(state: State) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🔲 TODO 3 - a fixed WORKFLOW of two nodes: the LLM fills in one blank, code does the rest.
+# ✅ TODO 3 (solved) - a fixed WORKFLOW of two nodes: the LLM fills in one blank,
+# code does the rest.
 #
-#   cancel_booking  (part 1)  LLM with structured output -> which PNR does the user mean?
-#                             Stores it in `state["pnr_code"]`. Nothing else!
-#   confirm_cancel  (part 2)  Code -> ask for approval, call api.cancel, format the answer.
+#   cancel_booking  LLM with structured output -> which PNR does the user mean?
+#   confirm_cancel  Code -> ask for approval, call api.cancel, format the answer.
 #
-# Why two nodes? `require_approval()` pauses the graph, and on resume LangGraph
-# re-runs the paused node FROM ITS FIRST LINE. If the LLM call were in the same
-# node, it would run again - and could pick a different booking than the one the
-# user just approved. Code before an interrupt must be safe to repeat.
+# Two nodes, because on resume LangGraph re-runs the paused node from its first
+# line: the LLM call must not be in the node that calls `require_approval()`,
+# or it could pick a different booking than the one the user approved.
 #
 # Compare with `travel_agent` below, where the LLM decides the steps itself.
-#
-# Part 1 - cancel_booking:
-#   1. Create a pydantic model `class PnrOutput(BaseModel): pnr_code: str = Field(description=...)`
-#      Tell it (in the description) to return an empty string when it is unclear.
-#   2. `llm.with_structured_output(PnrOutput).invoke([...])` with a SystemMessage containing
-#      `describe_user(state["user"])` - so "cancel my Oct 22 flight" can be mapped to a code -
-#      followed by `*state["messages"]`.
-#   3. Return `{"pnr_code": pnr_code}`, trimmed + upper-cased (it may be "").
-#
-# Part 2 - confirm_cancel (reads `state["pnr_code"]`; no LLM here!):
-#   1. If the code is empty, `return reply("Which booking…?")`.
-#   2. If not require_approval(f"Cancel booking {code}.") -> reply that nothing was cancelled.
-#      (It auto-approves until you do TODO 4.)
-#   3. `api.cancel(code)` -> reply with the refund and the new balance.
-#      Catch `ApiError` (e.g. "PNR is not active") and reply with its message.
-#
-# 👀 `classify_intent` (structured output), `load_context` (API call + try/except),
-#    `ask_clarification` (the `reply()` helper).
-# ✅ Check: pytest tests/unit/test_3_cancel_booking.py
-#    Try:   python -m flight_assistant.main "Please cancel my booking ABC123"
 # ─────────────────────────────────────────────────────────────────────────────
+class PnrOutput(BaseModel):
+    pnr_code: str = Field(description="The 6-character booking code to cancel, or an empty string if unclear")
+
+
 def cancel_booking(state: State) -> dict:
-    return {"pnr_code": ""}  # TODO 3 (part 1): implement cancel_booking in src/flight_assistant/nodes.py
+    extractor = llm.with_structured_output(PnrOutput)
+    result = extractor.invoke(
+        [
+            SystemMessage(
+                f"Find the booking the user wants to cancel in their latest message. {today_line()}\n"
+                f"The user's bookings:\n{describe_user(state.get('user'))}"
+            ),
+            *state["messages"],
+        ]
+    )
+    return {"pnr_code": result.pnr_code.strip().upper()}
 
 
 def confirm_cancel(state: State) -> dict:
-    return reply("TODO 3: implement cancel_booking and confirm_cancel in src/flight_assistant/nodes.py")
+    code = state.get("pnr_code")
+    if not code:
+        return reply("Which booking would you like to cancel? Please give me its PNR code.")
+
+    if not require_approval(f"Cancel booking {code}."):
+        return reply(f"OK, booking {code} was NOT cancelled.")
+
+    try:
+        result = api.cancel(code)
+        return reply(f"Booking {code} is cancelled. Refund: {result['refund']} EUR. New balance: {result['balance']} EUR.")
+    except ApiError as err:
+        return reply(f"Could not cancel {code}: {err.message}.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
