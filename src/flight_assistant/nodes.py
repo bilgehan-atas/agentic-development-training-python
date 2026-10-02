@@ -87,26 +87,24 @@ def classify_intent(state: State) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 🔲 TODO 2 - plain LLM invocation: `llm.invoke(messages)`.
+# ✅ TODO 2 (solved) - plain LLM invocation: `llm.invoke(messages)`.
 #
-# Answer questions about the account ("What's my balance?", "Which bookings
+# Answers questions about the account ("What's my balance?", "Which bookings
 # do I have?") using ONLY the data loaded by `load_context`. No tools needed:
-# everything the model needs can be put into the prompt.
-#
-# Steps:
-#   1. Build a SystemMessage that tells the model it is an airline assistant
-#      and gives it the account data: `describe_user(state["user"])`.
-#      (Adding `today_line()` helps with questions like "my next flight".)
-#   2. `llm.invoke([system_message, *state["messages"]])`
-#      (the whole conversation, so follow-up questions work) -> returns an AIMessage.
-#   3. Return `{"messages": [that_ai_message]}` - the reducer APPENDS it.
-#
-# 👀 `classify_intent` above does almost the same (but with structured output).
-# ✅ Check: pytest tests/unit/test_2_answer_info.py
-#    Try:   python -m flight_assistant.main "What is my balance and which bookings do I have?"
+# everything the model needs is already in the prompt.
 # ─────────────────────────────────────────────────────────────────────────────
 def answer_info(state: State) -> dict:
-    return reply("TODO 2: implement answer_info in src/flight_assistant/nodes.py")
+    response = llm.invoke(
+        [
+            SystemMessage(
+                f"You are a helpful airline assistant. {today_line()}\n"
+                f"Answer the user's latest question briefly, using ONLY this account data:\n\n"
+                f"{describe_user(state.get('user'))}"
+            ),
+            *state["messages"],
+        ]
+    )
+    return {"messages": [response]}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
