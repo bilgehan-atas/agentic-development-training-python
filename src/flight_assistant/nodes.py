@@ -191,4 +191,19 @@ def confirm_cancel(state: State) -> dict:
 #           python -m flight_assistant.main "Cancel ABC123 and book the evening flight on <some date> instead"
 # ─────────────────────────────────────────────────────────────────────────────
 def travel_agent(state: State) -> dict:
-    return reply("TODO 5: implement travel_agent in src/flight_assistant/nodes.py")
+    agent = create_agent(
+        model=llm,
+        tools=travel_tools,
+        system_prompt=(
+            f"You are a helpful airline assistant for IST<->FRA flights. {today_line()}\n"
+            f"The user's account:\n{describe_user(state.get('user'))}\n\n"
+            "Rules:\n"
+            "- Never invent flight ids: always get them from list_flights first.\n"
+            "- Act right away without asking for confirmation yourself - a separate "
+            "approval step already asks the user before any booking change runs.\n"
+            "- Finish by saying clearly what was done and the user's new balance."
+        ),
+        middleware=[HumanInTheLoopMiddleware(interrupt_on=interrupt_on)],
+    )
+    result = agent.invoke({"messages": state["messages"]})
+    return {"messages": [result["messages"][-1]]}
