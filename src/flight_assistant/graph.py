@@ -11,6 +11,7 @@ START and END are special built-in nodes: where a run begins and finishes.
 Print the graph as a Mermaid diagram with `python -m flight_assistant.draw`.
 """
 
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
 from .edges import route_after_load, route_by_intent
@@ -61,7 +62,7 @@ def build_graph():
     # ✅ Check: pytest tests/unit/test_1_graph_wiring.py
     builder.add_edge("classify_intent", "ask_clarification")
 
-    # 🔲 TODO 4 - `interrupt()` needs a CHECKPOINTER: it saves the state after
-    # every step so a paused run can be resumed later (same `thread_id`).
-    # Pass `checkpointer=InMemorySaver()` to compile().
-    return builder.compile()
+    # ✅ TODO 4 (solved) - a checkpointer saves the state after every step, which
+    # is what lets `interrupt()` pause the graph and resume it later, and what
+    # keeps the conversation of a thread between turns.
+    return builder.compile(checkpointer=InMemorySaver())
